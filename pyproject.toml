@@ -1,0 +1,67 @@
+[project]
+name = "display-overlay"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+license = "MIT"
+license-files = [ "LICENSE" ]
+maintainers = [
+  { name = "lesolas20", email = "lesolas@proton.me" },
+]
+authors = [
+  { name = "lesolas20", email = "lesolas@proton.me" },
+]
+requires-python = ">=3.11"
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+  "pygobject>=3.56.3",
+]
+
+[dependency-groups]
+dev = [
+  "pygobject-stubs>=2.17",
+]
+
+[tool.uv]
+config-settings-package = { pygobject-stubs = { config = "Gtk3,Gdk3" } }
+
+[tool.ruff]
+target-version = "py311"
+line-length = 79
+indent-width = 4
+lint.select = [
+  "A",
+  "ARG",
+  "ASYNC",
+  "B",
+  "C4",
+  "C90",
+  "COM",
+  "DOC",
+  "DTZ",
+  "E",
+  "F",
+  "FLY",
+  "I",
+  "LOG",
+  "N",
+  "PERF",
+  "PIE",
+  "PL",
+  "PTH",
+  "RET",
+  "RUF",
+  "S",
+  "SIM",
+  "UP",
+  "W",
+]
+lint.ignore = [ "SIM108" ]
+lint.isort.length-sort = true
+lint.pycodestyle.max-doc-length = 72
