@@ -224,20 +224,23 @@ class App:
 
         parser = ArgumentParser()
 
-        parser.add_argument(
+        source_group = parser.add_mutually_exclusive_group(required=True)
+
+        source_group.add_argument(
             "-s",
             "--script",
             type=str,
             default="",
             help="path to the script the output of which to display",
         )
-        parser.add_argument(
+        source_group.add_argument(
             "-t",
             "--text",
             type=str,
             default="",
             help="path to the text file to display",
         )
+
         parser.add_argument(
             "-c",
             "--css",
