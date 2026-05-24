@@ -142,12 +142,12 @@ def parse_image(string) -> AlignedImage:
     return AlignedImage(path, align, width, height)
 
 
-def glib_timeout_add_forever(interval: int, function) -> int:
-    def wrapper():
-        function()
+def glib_timeout_add_forever(interval: int, function, *user_data: Any) -> int:
+    def wrapper(user_data):
+        function(*user_data)
         return True
 
-    return GLib.timeout_add(interval, wrapper)
+    return GLib.timeout_add(interval, wrapper, user_data)
 
 
 class App:
