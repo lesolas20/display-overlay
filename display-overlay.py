@@ -26,6 +26,10 @@ from gi.repository import (  # noqa: E402, I001
     GtkLayerShell,  # type: ignore
 )
 
+VALID_GTK_LAYER_SHELL_LAYERS: tuple[GtkLayerShell.Layer,] = tuple(
+    GtkLayerShell.Layer(i) for i in (0, 1, 2, 3)
+)
+
 
 class AnimationState(Enum):
     NONE = 1
@@ -223,7 +227,7 @@ class App:
         self.parser = self.create_argument_parser()
         self.args: Namespace = self.parser.parse_args()
 
-        self.layer: int = 1
+        self.layer = GtkLayerShell.Layer.BOTTOM
         self.inner_box_width: int = 0
 
         if self.args.single_instance:
@@ -425,8 +429,8 @@ class App:
             type=int,
             default=1,
             help=(
-                "layer for the overlay to be on"
-                " (1 for bottom / 2 for top / 3 for overlay); default 1"
+                "layer for the overlay to be displayed on (0 for background"
+                " / 1 for bottom / 2 for top / 3 for overlay); default 1"
             ),
         )
         parser.add_argument(
@@ -447,7 +451,7 @@ class App:
             "--sig_layer",
             type=int,
             default=10,
-            help="signal number for switching layer; default: 10",
+            help="signal number for switching to the next layer; default: 10",
         )
         parser.add_argument(
             "-sv",
@@ -535,6 +539,11 @@ class App:
 
             case self.args.sig_layer:
                 print(f"Changed layer with a custom signal {sig}")
+
+                layers = VALID_GTK_LAYER_SHELL_LAYERS
+                layer_index = (self.layer + 1) % len(layers)
+                self.layer = layers[layer_index]
+
                 GtkLayerShell.set_layer(self.window, self.layer)
 
             case self.args.sig_refresh:
@@ -659,7 +668,12 @@ class App:
         # Create a window
         self.window: Gtk.Window = Gtk.Window()
         GtkLayerShell.init_for_window(self.window)
-        GtkLayerShell.set_layer(self.window, self.args.layer)
+
+        if self.args.layer in VALID_GTK_LAYER_SHELL_LAYERS:
+            self.layer = GtkLayerShell.Layer(self.args.layer)
+
+        GtkLayerShell.set_layer(self.window, self.layer)
+
         GtkLayerShell.set_exclusive_zone(self.window, 0)
 
         # Add containers
