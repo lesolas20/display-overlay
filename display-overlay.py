@@ -4,7 +4,9 @@ import json
 import shlex
 import signal
 import subprocess
+from enum import Enum
 from time import sleep
+from typing import Any
 from pathlib import Path
 from argparse import Namespace, ArgumentParser
 
@@ -23,6 +25,51 @@ from gi.repository import (  # noqa: E402, I001
     GdkPixbuf,
     GtkLayerShell,  # type: ignore
 )
+
+
+class AnimationState(Enum):
+    NONE = 1
+    FADE_IN = 2
+    FADE_OUT = 3
+
+
+class EpsilonComparable:
+    def __init__(self, value: float, epsilon: float) -> None:
+        if epsilon <= 0:
+            raise ValueError("epsilon must be greater than zero")
+
+        self.value = value
+        self.epsilon = epsilon
+
+    def __str__(self) -> str:
+        return f"EpsilonComparable({self.value}, {self.epsilon})"
+
+    def __hash__(self) -> int:
+        return hash((self.value, self.epsilon))
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, (int, float)):
+            return False
+
+        return abs(self.value - other) < self.epsilon
+
+    def __lt__(self, other: Any) -> bool:
+        if not isinstance(other, (int, float)):
+            raise TypeError
+
+        return (other - self.value) > self.epsilon
+
+    def __gt__(self, other: Any) -> bool:
+        if not isinstance(other, (int, float)):
+            raise TypeError
+
+        return (self.value - other) > self.epsilon
+
+    def __le__(self, other: Any) -> bool:
+        return NotImplemented
+
+    def __ge__(self, other: Any) -> bool:
+        return NotImplemented
 
 
 class GdkDisplayError(Exception):
@@ -150,6 +197,22 @@ def glib_timeout_add_forever(interval: int, function, *user_data: Any) -> int:
     return GLib.timeout_add(interval, wrapper, user_data)
 
 
+def animation_linear(time: float) -> float:
+    """Return `opacity` corresponding to given `time` using a linear
+    function.
+    """
+    return time
+
+
+def animation_ease_in_out_cubic(time: float) -> float:
+    """Return `opacity` corresponding to given `time` using a cubic
+    function.
+    """
+    if time < 0.5:  # noqa: PLR2004
+        return 4 * time**3
+    return 1 - (4 * (1 - time) ** 3)
+
+
 class App:
     def __init__(self) -> None:
         self.script_path: Path | None = None
@@ -173,6 +236,27 @@ class App:
         if self.args.css:
             self.load_css()
 
+        self.init_source()
+
+        self.apply_margins()
+        self.apply_vertical_position()
+        self.apply_horizontal_position()
+
+        self.init_animation()
+
+        self.window.connect("destroy", Gtk.main_quit)
+
+        if (self.args.refresh > 0) and self.script_path:
+            glib_timeout_add_forever(
+                self.args.refresh,
+                self.build_overlay_from_script,
+            )
+
+        self.mount_signals()
+
+        Gtk.main()
+
+    def init_source(self) -> None:
         if self.args.script:
             self.script_path = Path(os.path.realpath(self.args.script))
 
@@ -185,37 +269,59 @@ class App:
                 print(f"Using a script: {self.script_path}, no refresh")
 
             self.build_overlay_from_script()
+            return
 
-        elif self.args.text:
+        if self.args.text:
             self.text_path = Path(os.path.realpath(self.args.text))
 
             print(f"Using a text file: {self.text_path}")
 
             self.build_overlay_from_text()
+            return
 
-        else:
-            sys.stderr.write("ERROR: Neither script nor text file specified\n")
-            self.parser.print_help(sys.stderr)
-            sys.exit(1)
+        sys.stderr.write("ERROR: Neither script nor text file specified\n")
+        self.parser.print_help(sys.stderr)
+        sys.exit(1)
 
-        self.apply_margins()
-        self.apply_vertical_position()
-        self.apply_horizontal_position()
+    def init_animation(self) -> None:
+        # Prepare animation and window state
+        self.animation_state: AnimationState = AnimationState.NONE
 
-        if not self.args.invisible:
-            self.window.show_all()
+        is_animated: bool = self.args.animation_length > 0
+        is_visible: bool = not self.args.invisible
 
-        self.window.connect("destroy", Gtk.main_quit)
+        match [is_animated, is_visible]:
+            case [False, False]:
+                self.window.hide()
+            case [False, True]:
+                self.window.show_all()
+            case [True, False]:
+                self.animation_time = 0
+                Gtk.Widget.set_opacity(self.window, 0)
+                self.window.hide()
+            case [True, True]:
+                self.animation_time = 1
+                Gtk.Widget.set_opacity(self.window, 1)
+                self.window.show_all()
 
-        if self.script_path and self.args.refresh > 0:
+        # Set the animation function
+        match self.args.animation_function:
+            case "linear":
+                self.animation_function = animation_linear
+            case "cubic":
+                self.animation_function = animation_ease_in_out_cubic
+            case _:
+                self.animation_function = animation_linear
+
+        if self.args.animation_length > 0:
+            # Calculate animation frame time in milliseconds
+            self.frame_time: int = int(1000 / self.args.framerate)
+            # Create the animation loop
             glib_timeout_add_forever(
-                self.args.refresh,
-                self.build_overlay_from_script,
+                self.frame_time,
+                self.animation_update,
+                self.animation_function,
             )
-
-        self.mount_signals()
-
-        Gtk.main()
 
     def create_argument_parser(self) -> ArgumentParser:
         """Create an argument parser with arguments available in the
@@ -378,6 +484,36 @@ class App:
             default=0,
             help="refresh time in milliseconds; default: 0 (do not refresh)",
         )
+        parser.add_argument(
+            "-f",
+            "--framerate",
+            type=int,
+            default=60,
+            help=(
+                "toggle visibility animation framerate in frames per second;"
+                " default: 60"
+            ),
+        )
+        parser.add_argument(
+            "-al",
+            "--animation_length",
+            type=int,
+            default=0,
+            help=(
+                "toggle visibility animation length in millisecondsl"
+                " default: 0 (do not animate)"
+            ),
+        )
+        parser.add_argument(
+            "-af",
+            "--animation_function",
+            type=str,
+            default="linear",
+            help=(
+                "toggle visibility animation easing function"
+                " ('linear' / 'cubic'); default: linear"
+            ),
+        )
 
         return parser
 
@@ -406,10 +542,94 @@ class App:
                 self.build_overlay_from_script()
 
             case self.args.sig_visibility:
-                if self.window.is_visible():
-                    self.window.hide()
-                else:
-                    self.window.show_all()
+                self.handle_visibility_signal()
+
+    def handle_visibility_signal(self) -> None:
+        is_animated: bool = self.args.animation_length > 0
+        is_visible: bool = self.window.is_visible()
+        anim_state: AnimationState = self.animation_state
+
+        match [is_animated, is_visible, anim_state]:
+            case [False, False, _]:
+                self.window.show_all()
+            case [False, True, _]:
+                self.window.hide()
+
+            case [True, False, AnimationState.NONE]:
+                self.fade_in()
+            case [True, True, AnimationState.NONE]:
+                self.fade_out()
+
+            case [True, _, AnimationState.FADE_OUT]:
+                self.fade_in()
+            case [True, _, AnimationState.FADE_IN]:
+                self.fade_out()
+
+    def fade_in(self) -> None:
+        self.animation_state = AnimationState.FADE_IN
+
+    def fade_out(self) -> None:
+        self.animation_state = AnimationState.FADE_OUT
+
+    def animation_update(self, animation_function) -> None:  # noqa: C901
+        def clamp(value: float, min_value: float, max_value: float) -> float:
+            return min(max(value, min_value), max_value)
+
+        match self.animation_state:
+            case AnimationState.NONE:
+                return
+            case AnimationState.FADE_IN:
+                delta_t_direction = +1
+            case AnimationState.FADE_OUT:
+                delta_t_direction = -1
+
+        opacity: float = Gtk.Widget.get_opacity(self.window)
+        c_opacity = EpsilonComparable(opacity, 0.000001)
+
+        # Recalculate animation time
+        delta_t: float = self.frame_time / self.args.animation_length
+        self.animation_time = clamp(
+            self.animation_time + (delta_t_direction * delta_t),
+            0,
+            1,
+        )
+
+        # Calculate the next opacity value
+        next_opacity: float = animation_function(self.animation_time)
+        c_next_opacity = EpsilonComparable(next_opacity, 0.000001)
+
+        # Start fade-in animation
+        if (c_opacity == 0) and (c_next_opacity > 0):
+            self.window.show_all()
+            Gtk.Widget.set_opacity(self.window, next_opacity)
+
+        # End fade-in animation
+        elif (c_opacity < 1) and (c_next_opacity == 1):
+            Gtk.Widget.set_opacity(self.window, next_opacity)
+            self.animation_state = AnimationState.NONE
+
+        # Start fade-out animation
+        elif (c_opacity == 1) and (c_next_opacity < 1):
+            Gtk.Widget.set_opacity(self.window, next_opacity)
+
+        # End fade-out animation
+        elif (c_opacity > 0) and (c_next_opacity == 0):
+            Gtk.Widget.set_opacity(self.window, next_opacity)
+            self.window.hide()
+            self.animation_state = AnimationState.NONE
+
+        # End animation if stuck on the 0% opacity boundary
+        elif (c_opacity == 0) and (c_next_opacity == 0):
+            self.window.hide()
+            self.animation_state = AnimationState.NONE
+
+        # End animation if stuck on the 100% opacity boundary
+        elif (c_opacity == 1) and (c_next_opacity == 1):
+            self.animation_state = AnimationState.NONE
+
+        # Run a normal animation frame
+        else:
+            Gtk.Widget.set_opacity(self.window, next_opacity)
 
     def enforce_single_instance(self) -> None:
         """Try to kill an already running instances of the program."""
