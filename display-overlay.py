@@ -10,7 +10,10 @@ from typing import Any
 from pathlib import Path
 from argparse import Namespace, ArgumentParser
 
-import gi
+try:
+    import gi
+except ModuleNotFoundError:
+    raise RuntimeError("PyGObject is not installed") from None
 
 gi.require_version("Gtk", "3.0")
 try:
